@@ -1,0 +1,550 @@
+#!/bin/bash
+
+readonly cDir=`dirname $0`
+readonly SYS_HOSTS="/etc/hosts"
+readonly HOSTS="${cDir}/hosts"
+
+readonly BEGIN_PATTERN="# begin"
+
+readonly MSG_HEAD="Local hosts setting"
+readonly MSG_GDNS="using global DNS setting now"
+readonly MSG_ON="\e[1;32mON\e[m"
+readonly MSG_OFF="\e[1;31mOFF\e[m"
+
+readonly SYS_HOSTS_BEGIN="###ACTIVE CONFIG###"
+readonly SYS_HOSTS_END="###ACTIVE CONFIG END###"
+
+
+Usage()
+{
+    local exit_code=$1
+    local exe=${0##*/}
+
+    local c_opt="\e[33m"
+    local c_arg="\e[1;4;32m"
+    local c_ori="\e[m"
+
+    echo "Usage:"
+    if [ $exit_code -ge 0 ]; then
+	printf "     ${c_opt}${exe}${c_ori}                     show current setting\n"
+    else
+	exe=''
+	printf "     ${c_opt}${exe} list${c_ori}                show current setting\n"
+    fi
+    printf "     ${c_opt}${exe} list${c_ori} <${c_arg}set${c_ori}>          show current setting of specific set\n"
+    printf "     ${c_opt}${exe} dig${c_ori} <${c_arg}set${c_ori}>           show current host table of specific set\n"
+    printf "     ${c_opt}${exe} all-off${c_ori} <${c_arg}set${c_ori}>       (root) turn off all local settings (Use DNS)\n"
+    printf "     ${c_opt}${exe} on${c_ori} <${c_arg}set${c_ori}> <${c_arg}group${c_ori}>    (root) to switch <group> hosts setting ON\n"
+    echo ""
+
+    if [ $exit_code -ge 0 ]; then
+	exit $exit_code
+    fi
+}
+
+check_root()
+{
+    if [ "`whoami`" != 'root' ]; then
+	printf "Please execute again with \e[1;31mroot\e[m.\n"
+	exit 1
+    fi
+}
+
+#################################
+# list operations
+#################################
+
+# return value:
+# 0: found item in list
+# -1: not found
+in_list()
+{
+    local list_name=$1
+    local entry=$2
+
+    local list=''
+    eval list=\$$list_name
+    local is_found=1
+
+    for item in ${list}; do
+	if [ "$item" = "${entry}" ]; then
+	    is_found=0
+	    break
+	fi
+    done
+
+    return ${is_found}
+}
+
+list_add()
+{
+    local list_name=$1
+    local entry=$2
+
+    if in_list ${list_name} ${entry} ; then
+        return
+    fi
+
+    local list=''
+    eval list=\$$list_name
+
+    if [ "$list" = '' ]; then
+	eval $list_name="${entry}"
+    else
+	eval $list_name=\"${list} ${entry}\"
+    fi
+}
+
+#################################
+# validation
+#################################
+
+validate_set()
+{
+    local set=$1
+
+    if [ -z "${set}" ]; then
+	error "Please provide set name"
+	return 1
+    fi
+
+    if ! in_list 'sets' "${set}" ; then
+	error "Not a valid set name"
+	return 1
+    fi
+
+    return 0
+}
+
+validate_group()
+{
+    local arg_1=$1
+    local arg_2=$2
+
+    # we need to parse "$2" here, to see if its a valid record name in the $HOSTS file
+
+    if [ -z "$arg_1" ]; then
+	error "Please provide group name"
+	return 1
+    fi
+
+    local query_group="${arg_1}"
+    if [ ! -z "${arg_2}" ]; then
+	query_group="${arg_1}:${arg_2}"
+    fi
+
+    if ! in_list 'groups' "${query_group}" ; then
+	error "Not a valid group name"
+	return 1
+    fi
+
+    return 0
+}
+
+#################################
+# Setting modifying functions
+#################################
+
+begin_line()
+{
+    echo "# begin ${1} host setting"
+}
+
+end_line()
+{
+    echo "# end ${1} host setting"
+}
+
+switch_off()
+{
+    local group=$1
+    local is_output=$2
+
+    local begin_tag=`begin_line ${group}`
+    local end_tag=`end_line ${group}`
+
+    if ! egrep -q "^${begin_tag}$" ${HOSTS}; then
+	if [ "${is_output}" -eq 1 ]; then
+	    printf "${MSG_HEAD} \e[33m${group}\e[m is already off\n"
+	fi
+    else
+	sed -e "/${begin_tag}/,/${end_tag}/s/^/# /" -i ${HOSTS}
+	if [ "${is_output}" -eq 1 ]; then
+	    printf "${MSG_HEAD} \e[33m${group}\e[m is on, turn it ${MSG_OFF} now\n"
+	fi
+    fi
+}
+
+switch_on()
+{
+    local group=$1
+    local is_output=$2
+
+    local begin_tag=`begin_line ${group}`
+    local end_tag=`end_line ${group}`
+
+    if egrep -q "^${begin_tag}$" ${HOSTS}; then
+	if [ "${is_output}" -eq 1 ]; then
+	    printf "${MSG_HEAD} \e[33m${group}\e[m is already on\n"
+	fi
+    else
+	sed -e "/${begin_tag}/,/${end_tag}/s/^# //" -i ${HOSTS}
+	if [ "${is_output}" -eq 1 ]; then
+	    printf "${MSG_HEAD} \e[33m${group}\e[m is off, turn it ${MSG_ON} now\n"
+	fi
+    fi
+}
+
+switch_off_set()
+{
+    local set=$1
+    local except=$2
+
+    for group in ${groups}; do
+	if [ "$group" != "$except" ]; then
+	    if echo ${group} | egrep -q "^${set}:"; then
+		local begin_tag=`begin_line ${group}`
+
+		if egrep -q "^${begin_tag}$" ${HOSTS}; then
+		    switch_off ${group} 1
+		fi
+	    fi
+	fi
+    done
+}
+
+test_on_group_status()
+{
+    local group=$1
+    local begin_tag=`begin_line ${group}`
+    local lookup=`egrep "${begin_tag}$" ${HOSTS}`
+
+    echo "${lookup}" | egrep -q "^${BEGIN_PATTERN}"
+    return $?
+}
+
+test_set_setting()
+{
+    local set=$1
+    local setting=""
+
+    for group in `echo ${groups} | tr ' ' \\\n | egrep "^${set}:"`; do
+	if test_on_group_status ${group}; then
+	    setting="${group}"
+	fi
+    done
+
+    echo ${setting}
+}
+
+#################################
+# output setting functions
+#################################
+
+print_out_test_group()
+{
+    local group=$1
+
+    if echo ${group} | grep -q ':'; then
+	printf "   * \e[33m%s\e[m setting is " `echo ${group} | cut -d: -f2`
+    else
+	printf "   * \e[33m%s\e[m setting is " ${group}
+    fi
+
+    if test_on_group_status ${group}; then
+	printf "${MSG_ON}\n"
+    else
+	printf "${MSG_OFF}\n"
+    fi
+}
+
+print_out_test_set()
+{
+    local set=$1
+    printf " - set: \e[1;33;46m ${set} \e[m\n"
+    for group in `echo ${groups} | tr ' ' \\\n | egrep "^${set}:"`; do
+	print_out_test_group ${group}
+    done
+}
+
+print_out_setting()
+{
+    for set in ${sets}; do
+	print_out_test_set ${set}
+    done
+
+    local uncategorized=`echo ${groups} | tr ' ' \\\n | grep -v ':'`
+    if [ ! -z "${uncategorized}" ]; then
+	printf " - \e[1;35muncategorized\e[m\n"
+	for group in ${uncategorized}; do
+	    print_out_test_group ${group}
+	done
+    fi
+}
+
+look_up_group()
+{
+    local is_output=$1
+
+    local setting_line=`grep "${BEGIN_PATTERN}" ${HOSTS}`
+    for word in ${setting_line}; do
+	if ! echo "${word}" | egrep -q "^(#|begin|host|setting)$" ; then
+	    local end_tag=`end_line ${word}`
+	    if grep -q "${end_tag}" ${HOSTS}; then
+		list_add 'groups' $word
+
+		# collect sets information
+		if echo "${word}" | grep -q ':'; then
+		    list_add 'sets' `echo ${word} | cut -d: -f1`
+		fi
+	    else
+		# parse error, force quit
+		error "begin_tag and end_tag for ${word} not match"
+		exit 1
+	    fi
+	fi
+    done
+
+    if [ "${is_output}" -eq 1 ]; then
+	print_out_setting
+    fi
+}
+
+error()
+{
+    local msg=$1
+    printf "\e[1;31mError\e[m: "
+    echo "$msg"
+}
+
+#################################
+# cmd handling
+#################################
+
+do_list()
+{
+    if [ "$1" = '' ]; then
+	print_out_setting
+	return 0
+    else
+	if ! validate_set "$1"; then
+	    return 1
+	fi
+
+	print_out_test_set $1
+	return 0
+    fi
+}
+
+do_dig()
+{
+    if ! validate_set "$1"; then
+	return 1
+    fi
+
+    local active=`test_set_setting "$1"`
+    if [ ! -z "${active}" ]; then
+	local begin_tag=`begin_line ${active}`
+	local end_tag=`end_line ${active}`
+	local begin="^${begin_tag}$"
+	local end="^${end_tag}$"
+
+	cat ${HOSTS} | sed -n "/${begin}/,/${end}/p" | grep -v '^#'
+    else
+	echo ${MSG_GDNS}
+    fi
+
+    return 0
+}
+
+do_all_off()
+{
+    if ! validate_set "$1"; then
+	return 1
+    fi
+
+    switch_off_set "$1" ""
+    printf "Set \e[1;33;46m ${1} \e[m is "
+    echo ${MSG_GDNS}
+
+    apply
+
+    return 0
+}
+
+do_on()
+{
+    # we need to parse "$1" here, to see if its a valid record name in the $HOSTS file
+    if ! validate_group "$1" "$2"; then
+	return 1
+    fi
+
+    local query_group=$1
+    if [ ! -z "$2" ]; then
+	query_group="${1}:${2}"
+	switch_off_set "$1" "${query_group}"
+    elif echo ${query_group} | grep -q ':'; then
+	switch_off_set `echo ${query_group} | cut -d: -f1` "${query_group}"
+    fi
+
+    switch_on "${query_group}" 1
+
+    apply
+
+    return 0
+}
+
+apply()
+{
+    check_root
+    customHosts="${SYS_HOSTS_BEGIN}\n`cat ${HOSTS}`\n${SYS_HOSTS_END}"
+	sed -e "/${SYS_HOSTS_BEGIN}/,/${SYS_HOSTS_END}/d" -i $SYS_HOSTS
+    echo -e "$customHosts" >> $SYS_HOSTS
+
+    digs
+
+    return 0
+}
+
+digs()
+{
+    echo -e "current valid hosts:\n"
+    for set in ${sets}; do
+        do_dig ${set}
+    done
+}
+
+#################################
+# shell implementations
+#################################
+
+shell_parse()
+{
+    if [ "$1" = 'clear' -o "$1" = 'cls' ]; then
+	clear
+	return $?
+    elif [ "$1" = 'help' ]; then
+	Usage -1
+	return 0
+    elif [ "$1" = 'list' ]; then
+	shift
+	do_list $@
+	return $?
+    elif [ "$1" = 'dig' -o "$1" = 'drill' ]; then
+	shift
+	do_dig $@
+	return $?
+    elif [ "$1" = 'all-off' ]; then
+	shift
+	do_all_off $@
+	return $?
+    elif [ "$1" = 'on' ]; then
+	shift
+	do_on $@
+	return $?
+    else
+	error "unknown command"
+	return 1
+    fi
+}
+
+shell_input()
+{
+    while true; do
+	printf "\e[32mhost-switch\e[m"
+	read -p ' >> ' input
+
+	if [ $? -eq 1 ]; then
+	    echo    # force newline
+	    exit 0
+	fi
+
+	if [ "$input" = 'exit' -o "$input" = 'quit' -o "$input" = 'bye' ]; then
+	    echo 'bye!'
+	    exit 0
+	fi
+
+	if [ "$input" = '?' ]; then
+	    # special handling '?' here, to prevent expanded as glob to shell_parse
+	    Usage -1
+	elif [ -z "$input" ]; then
+	    printf ""
+	    #
+	else
+	    # do something
+	    shell_parse $input
+	fi
+
+	if [ $? -eq 0 ]; then
+	    printf "[\e[32mo\e[m] "
+	else
+	    printf "[\e[31mx\e[m] "
+	fi
+    done
+}
+
+#################################
+# main routine
+#################################
+
+main()
+{
+    # initialize
+    if [ "$1" = '-h' -o "$1" = '--help' -o "$1" = 'help' ]; then
+	Usage 0
+    else
+	look_up_group 0
+    fi
+
+    # list/show operation
+    if [ "$1" = '' ]; then
+	print_out_setting
+	exit 0
+    elif [ "$1" = 'show' -o "$1" = 'list' ]; then
+	shift
+	do_list $@
+	exit $?
+    elif [ "$1" = 'dig' -o "$1" = 'drill' ]; then
+	shift
+	do_dig $@
+	exit $?
+    elif [ "$1" = 'apply' ]; then
+	shift
+	apply
+	exit $?
+    elif [ "$1" = 'digs' ]; then
+	shift
+	digs
+	exit $?
+    elif [ "$1" != 'all-off' -a "$1" != 'on' -a "$1" != 'shell' ]; then
+	Usage 1
+    else
+	check_root
+    fi
+
+    # The process should has "$1" when it comes to here.
+
+    if [ "$1" = 'all-off' ]; then
+	shift
+	do_all_off $@
+	exit $?
+    elif [ "$1" = 'on' ]; then
+	shift
+	do_on $@
+	exit $?
+    elif [ "$1" = 'shell' ]; then
+	# interactive mode
+	shell_input
+    else
+	# should not go here
+	error "Fatal error"
+	exit 1
+    fi
+}
+
+
+# global variables
+sets=""
+groups=""
+
+main $@

@@ -1,0 +1,20 @@
+# begin foo:DEV-my host setting
+# put any comment / description here if you want
+10.1.0.35 my.foo.com
+10.1.0.36 my2.foo.com
+# end foo:DEV-my host setting
+
+# # begin foo:STAGING host setting
+# 10.3.0.47 my.foo.com
+# 10.3.0.48 my2.foo.com
+# # end foo:STAGING host setting
+
+# # begin bar:QA host setting
+# 10.2.0.100 my.bar.net
+# 10.2.0.110 my2.bar.net
+# # end bar:QA host setting
+
+# # begin bar:testing host setting
+# 10.2.10.33 my.bar.net
+# 10.2.10.39 my2.bar.net
+# # end bar:testing host setting
