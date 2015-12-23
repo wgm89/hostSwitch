@@ -9,6 +9,7 @@ Commands
         hostSwitch list <set>          show current setting of specific set
         hostSwitch dig <set>           show current host table of specific set
         hostSwitch digs                show all current valid hosts
+        hostSwitch apply               (root) update /etc/hosts
         hostSwitch all-off <set>       (root) turn off all local settings (Use DNS)
         hostSwitch on <set> <group>    (root) to switch <group> hosts setting ON
 

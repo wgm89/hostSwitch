@@ -33,6 +33,7 @@ Usage()
     fi
     printf "     ${c_opt}${exe} list${c_ori} <${c_arg}set${c_ori}>          show current setting of specific set\n"
     printf "     ${c_opt}${exe} dig${c_ori} <${c_arg}set${c_ori}>           show current host table of specific set\n"
+    printf "     ${c_opt}${exe} digs${c_ori}                                show all current valid hosts \n"
     printf "     ${c_opt}${exe} all-off${c_ori} <${c_arg}set${c_ori}>       (root) turn off all local settings (Use DNS)\n"
     printf "     ${c_opt}${exe} on${c_ori} <${c_arg}set${c_ori}> <${c_arg}group${c_ori}>    (root) to switch <group> hosts setting ON\n"
     echo ""
