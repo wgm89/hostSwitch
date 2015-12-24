@@ -1,4 +1,4 @@
-Thanks for linpc
+Base on linpc/host-switch
 
 A CLI tool to easily switch between different hosts settings
 Commands
