@@ -45,6 +45,7 @@ Usage()
 
 check_root()
 {
+    return
     if [ "`whoami`" != 'root' ]; then
 	printf "Please execute again with \e[1;31mroot\e[m.\n"
 	exit 1
@@ -399,8 +400,8 @@ apply()
 {
     check_root
     customHosts="${SYS_HOSTS_BEGIN}\n`cat ${HOSTS}`\n${SYS_HOSTS_END}"
-	sed -e "/${SYS_HOSTS_BEGIN}/,/${SYS_HOSTS_END}/d" -i $SYS_HOSTS
-    echo -e "$customHosts" >> $SYS_HOSTS
+	sudo sed -e "/${SYS_HOSTS_BEGIN}/,/${SYS_HOSTS_END}/d" -i $SYS_HOSTS
+    echo -e "$customHosts" | sudo tee -a $SYS_HOSTS > /dev/null
 
     digs
 
